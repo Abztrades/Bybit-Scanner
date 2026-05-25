@@ -6,11 +6,11 @@ from datetime import datetime
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-VOLUME_MIN = 50_000_000
-OI_MIN = 10_000_000
-OI_CHANGE_MAX = 30.0
-FUNDING_MIN = -0.0005
-FUNDING_MAX = 0.0005
+VOLUME_MIN = 35_000_000
+OI_MIN = 5_000_000
+OI_CHANGE_MAX = 20.0
+FUNDING_MIN = -0.001
+FUNDING_MAX = 0.001
 SPREAD_MAX = 0.001
 SCAN_INTERVAL = 600
 
@@ -32,17 +32,29 @@ async def send_telegram(session, message):
 async def get_all_symbols(session):
     url = f"{BYBIT_BASE}/v5/market/instruments-info"
     params = {"category": "linear", "limit": 1000}
-    try:
-        async with session.get(url, params=params) as resp:
-            data = await resp.json()
-            symbols = []
-            for item in data["result"]["list"]:
-                if item["quoteCoin"] == "USDT" and item["status"] == "Trading":
-                    symbols.append(item["symbol"])
-            return symbols
-    except Exception as e:
-        print(f"Symbol fetch error: {e}")
-        return []
+    for attempt in range(3):
+        try:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                raw = await resp.text()
+                try:
+                    import json
+                    data = json.loads(raw)
+                except Exception as parse_err:
+                    print(f"Symbol JSON parse error (attempt {attempt+1}): {parse_err}")
+                    print(f"Raw response preview: {raw[:200]}")
+                    await asyncio.sleep(3)
+                    continue
+                symbols = []
+                for item in data.get("result", {}).get("list", []):
+                    if item.get("quoteCoin") == "USDT" and item.get("status") == "Trading":
+                        symbols.append(item["symbol"])
+                if symbols:
+                    return symbols
+        except Exception as e:
+            print(f"Symbol fetch error (attempt {attempt+1}): {e}")
+            await asyncio.sleep(3)
+    print("All symbol fetch attempts failed.")
+    return []
 
 async def get_ticker(session, symbol):
     url = f"{BYBIT_BASE}/v5/market/tickers"
